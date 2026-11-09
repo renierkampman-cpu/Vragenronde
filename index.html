@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<!--
+  ANONIEME VRAGENRONDE (webversie, geen installatie nodig)
+  - Presentator: open https://renierkampman-cpu.github.io/vragenronde/ op het grote scherm.
+    De eerste keer wordt automatisch een sessie aangemaakt; deze browser onthoudt hem.
+  - Collega's scannen de QR-code; een scan is genoeg voor de hele sessie.
+  - Live-verbinding via de gratis openbare dienst ntfy.sh (geen account). Zie README.md.
+-->
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Anonieme vragenronde</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --text: #f8fafc; --muted: #94a3b8;
+    --accent: #38bdf8; --accent2: #22c55e; --danger: #ef4444; --border: #334155;
+    --bars: #38bdf8, #a78bfa, #f472b6, #fbbf24, #34d399;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; }
+  .hidden { display: none !important; }
+
+  /* ---------- presentator ---------- */
+  #presenter { display: grid; grid-template-columns: 1fr minmax(260px, 26vw); grid-template-rows: auto 1fr auto; height: 100vh; gap: 0; }
+  #presenter.noqr { grid-template-columns: 1fr; }
+  #presenter.noqr #qrside { display: none; }
+  #p-head { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 1.2vh 2.5vw; color: var(--muted); font-size: clamp(16px, 1.6vw, 28px); }
+  #p-main { padding: 2vh 3vw; display: flex; flex-direction: column; min-height: 0; }
+  #p-question { font-size: clamp(28px, 3.6vw, 72px); font-weight: 800; line-height: 1.15; margin: 0 0 3vh; }
+  #bars { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 2.2vh; min-height: 0; }
+  .bar-row { display: grid; grid-template-columns: minmax(150px, 30%) 1fr minmax(150px, 13%); align-items: center; gap: 1.5vw; font-size: clamp(18px, 2vw, 40px); }
+  .bar-label { font-weight: 600; overflow-wrap: anywhere; }
+  .bar-track { background: var(--panel); border-radius: 12px; height: clamp(28px, 5.5vh, 70px); overflow: hidden; }
+  .bar-fill { height: 100%; width: 0; border-radius: 12px; transition: width .6s ease; }
+  .bar-val { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar-val b { font-size: 1.1em; } .bar-val span { color: var(--muted); font-size: .8em; }
+  #p-total { font-size: clamp(18px, 2vw, 36px); color: var(--muted); margin-top: 2vh; }
+  #p-total b { color: var(--text); }
+  #p-empty { font-size: clamp(22px, 2.5vw, 44px); color: var(--muted); margin: auto; text-align: center; }
+  #qrside { background: #fff; color: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3vh 1.5vw; text-align: center; margin: 2vh 2vw 2vh 0; border-radius: 20px; }
+  #qrside h2 { margin: 0 0 1.5vh; font-size: clamp(18px, 1.8vw, 34px); }
+  #qr { width: 100%; max-width: 24vw; aspect-ratio: 1; }
+  #qr svg, #qr img { width: 100%; height: 100%; }
+  #qrurl-unused { margin-top: 1.5vh; font-family: ui-monospace, monospace; font-size: clamp(12px, 1.05vw, 20px); word-break: break-all; }
+  #qrside p { color: #475569; font-size: clamp(13px, 1vw, 18px); margin: 1vh 0 0; }
+  #p-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; padding: 1.2vh 2.5vw 1.8vh; align-items: center; opacity: .35; transition: opacity .2s; }
+  #p-bar:hover, #p-bar:focus-within { opacity: 1; }
+  .btn { background: var(--panel); color: var(--text); padding: 10px 16px; border: 1px solid var(--border); }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #0f172a; border-color: var(--accent); font-weight: 700; }
+  .btn.danger { background: transparent; color: #fca5a5; border-color: #7f1d1d; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .spacer { flex: 1; }
+  #status { font-size: 14px; color: var(--muted); }
+  #status.bad { color: #fca5a5; }
+
+  /* beheerpaneel */
+  #manage { position: fixed; inset: 0; background: rgba(2,6,23,.75); display: flex; justify-content: flex-end; z-index: 10; }
+  #manage .drawer { width: min(640px, 100%); height: 100%; overflow: auto; background: #111827; padding: 24px; border-left: 1px solid var(--border); }
+  #manage h2 { margin: 0 0 12px; }
+  .qitem { display: flex; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+  .qitem.active { border-color: var(--accent); background: #0c2233; }
+  .qitem .qt { flex: 1; cursor: pointer; }
+  .qitem .qt small { display: block; color: var(--muted); margin-top: 3px; }
+  .qitem .btn { padding: 6px 10px; font-size: 14px; }
+  form#qform { margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+  form#qform label { display: block; color: var(--muted); font-size: 14px; margin: 8px 0 4px; }
+  input[type=text] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #0b1220; color: var(--text); font: inherit; }
+  .optrow { display: flex; gap: 6px; margin-bottom: 6px; }
+  .optrow .btn { padding: 6px 12px; }
+  #formerr { color: #fca5a5; min-height: 1.2em; margin-top: 8px; }
+
+  /* ---------- telefoon ---------- */
+  #answer { max-width: 560px; margin: 0 auto; padding: 22px 18px 40px; min-height: 100vh; display: flex; flex-direction: column; }
+  #a-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+  #a-question { font-size: 26px; font-weight: 800; line-height: 1.2; margin: 0 0 22px; }
+  .opt { display: block; width: 100%; text-align: left; padding: 18px 18px; margin-bottom: 12px; font-size: 19px; background: var(--panel); color: var(--text); border: 2px solid var(--border); }
+  .opt:active, .opt.sel { border-color: var(--accent); background: #0c2233; }
+  .opt:disabled { opacity: .6; }
+  .msg { text-align: center; margin: auto 0; font-size: 20px; color: var(--muted); }
+  .msg .big { font-size: 52px; display: block; margin-bottom: 8px; }
+  .msg b { color: var(--text); }
+  #conn { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: #7c2d12; color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 14px; z-index: 20; }
+  #a-err { color: #fca5a5; text-align: center; min-height: 1.2em; }
+  #setup { max-width: 760px; margin: 0 auto; padding: 40px 22px; line-height: 1.5; font-size: 18px; }
+  #setup h1 { font-size: 30px; margin: 0 0 8px; color: #fbbf24; }
+  #setup h2 { font-size: 20px; margin: 26px 0 6px; }
+  #setup code, #setup pre { background: #020617; border: 1px solid var(--border); border-radius: 8px; font-family: ui-monospace, Consolas, monospace; }
+  #setup code { padding: 1px 6px; }
+  #setup pre { padding: 12px 14px; overflow-x: auto; font-size: 16px; margin: 6px 0; }
+  #setup .muted { color: var(--muted); font-size: 15px; }
+  .foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; }
+  #setup { max-width: 760px; margin: 0 auto; padding: 40px 22px; line-height: 1.5; font-size: 18px; }
+  #setup h1 { font-size: 30px; margin: 0 0 8px; color: #fbbf24; }
+  #setup code { background: #020617; border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+  .linkbox { margin-top: 22px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+  .linkbox p { color: var(--muted); font-size: 14px; margin: 6px 0 10px; }
+  .linkrow { display: flex; gap: 6px; margin: 6px 0 14px; }
+  .linkrow input { font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="conn" class="hidden">Verbinding herstellen…</div>
+
+<!-- ===== FOUT / GEEN VERBINDING ===== -->
+<div id="setup" class="hidden">
+  <h1 id="setup-title">Geen verbinding</h1>
+  <p id="setup-why"></p>
+  <ul id="setup-tips">
+    <li>Controleer je internetverbinding.</li>
+    <li>Sommige bedrijfs- of gastnetwerken blokkeren de gratis berichtendienst <code>ntfy.sh</code> die deze pagina gebruikt. Probeer op je telefoon <b>mobiele data</b> (wifi uit).</li>
+    <li>De pagina probeert het automatisch opnieuw.</li>
+  </ul>
+</div>
+
+<!-- ===== PRESENTATOR ===== -->
+<div id="presenter" class="hidden">
+  <div id="p-head"><span id="p-counter"></span><span>Anonieme vragenronde</span></div>
+  <div id="p-main">
+    <h1 id="p-question"></h1>
+    <div id="bars"></div>
+    <div id="p-empty" class="hidden"></div>
+    <div id="p-total"></div>
+  </div>
+  <aside id="qrside">
+    <h2>Scan en antwoord anoniem</h2>
+    <div id="qr"></div>
+    <p>Geen naam of inlog nodig · laat de pagina open staan</p>
+  </aside>
+  <div id="p-bar">
+    <button class="btn" id="b-prev">◀ Vorige</button>
+    <button class="btn primary" id="b-next">Volgende ▶</button>
+    <button class="btn" id="b-manage">Vragen beheren</button>
+    <button class="btn danger" id="b-clear">Antwoorden deze vraag wissen</button>
+    <span class="spacer"></span>
+    <span id="status"></span>
+    <button class="btn" id="b-qr">QR verbergen</button>
+    <button class="btn" id="b-full">Volledig scherm</button>
+  </div>
+</div>
+
+<div id="manage" class="hidden">
+  <div class="drawer">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2>Vragen beheren</h2><button class="btn" id="m-close">Sluiten ✕</button>
+    </div>
+    <p style="color:var(--muted);margin-top:0">Klik op een vraag om hem op het scherm en op alle telefoons te zetten.</p>
+    <div id="qlist"></div>
+    <form id="qform" autocomplete="off">
+      <strong id="f-title">Nieuwe vraag</strong>
+      <label for="f-text">Vraag</label>
+      <input type="text" id="f-text" maxlength="200" placeholder="Bijv. Hoe nuttig vond je dit overleg?">
+      <label>Antwoordopties (2 tot 5)</label>
+      <div id="f-opts"></div>
+      <button type="button" class="btn" id="f-addopt">+ Optie toevoegen</button>
+      <div id="formerr"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button type="submit" class="btn primary" id="f-save">Vraag toevoegen</button>
+        <button type="button" class="btn hidden" id="f-cancel">Annuleren</button>
+      </div>
+    </form>
+    <div class="linkbox">
+      <strong>Jouw presentatorlink</strong>
+      <p>Deze browser onthoudt je sessie: open gewoon weer het hoofdadres. Op een andere computer verder? Gebruik dan deze link. <b>Deel hem niet</b>: wie hem heeft, kan de vragen bedienen.</p>
+      <div class="linkrow"><input type="text" id="m-adminlink" readonly><button class="btn" id="m-copyadmin" type="button">Kopiëren</button></div>
+      <strong>Link voor collega's</strong> (staat ook in de QR-code)
+      <div class="linkrow"><input type="text" id="m-phonelink" readonly><button class="btn" id="m-copyphone" type="button">Kopiëren</button></div>
+    </div>
+    <div style="margin-top:24px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn danger" id="m-clearall">Alle antwoorden wissen</button>
+      <button class="btn danger" id="m-reset">Standaardvragen herstellen</button>
+      <button class="btn danger" id="m-new">Nieuwe sessie (nieuwe QR-code)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TELEFOON ===== -->
+<div id="answer" class="hidden">
+  <div id="a-head"><span>Anonieme vragenronde</span><span id="a-counter"></span></div>
+  <div id="a-body"><div class="msg">Verbinden…</div></div>
+  <div id="a-err"></div>
+  <div class="foot">Anoniem: je naam of e-mail wordt nergens gevraagd of opgeslagen. Laat deze pagina open staan; nieuwe vragen verschijnen vanzelf.</div>
+</div>
+
+<script src="qrcode.js"></script>
+<script>
+(function () {
+  'use strict';
+  var NTFY = 'https://ntfy.sh';
+  var DEFAULTS = [
+    { id: 'd1', text: 'Wat neem je mee uit dit overleg?', options: ['Nieuwe informatie', "Afstemming met collega's", 'Beslissingen', 'Weinig', 'Anders'] },
+    { id: 'd2', text: 'Wat mis je eraan?', options: ['Interactie', 'Duidelijke agenda', 'Diepgang', 'Niets', 'Anders'] },
+    { id: 'd3', text: 'Zou je het missen als het wegviel?', options: ['Ja, zeker', 'Een beetje', 'Neutraal', 'Nee'] },
+    { id: 'd4', text: 'Haal je iets uit het bijzonderhedenrondje aan het einde van het overleg?', options: ['A: ja, ik hoor er vaak iets nuttigs', 'B: soms', 'C: zelden', 'D: nee, het is vooral routine'] },
+    { id: 'd5', text: 'Moeten wij doorgaan met het BT-overleg (binnenteamoverleg)?', options: ['A: ja', 'B: nee'] }
+  ];
+  var MIN_O = 2, MAX_O = 5;
+  var COLORS = ['#38bdf8', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- hulpfuncties ----------
+  function el(tag, attrs, text) {               // veilige DOM-opbouw, nooit innerHTML met invoer
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) { if (k === 'class') e.className = attrs[k]; else e.setAttribute(k, attrs[k]); }
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function rndHex(bytes) {
+    var a = new Uint8Array(bytes); crypto.getRandomValues(a);
+    return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  function b64u(bytes) {
+    var s = ''; bytes = new Uint8Array(bytes);
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function unb64u(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/'); while (str.length % 4) str += '=';
+    var s = atob(str), a = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+  }
+  function utf8(s) { return new TextEncoder().encode(s); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function clean(s, max) { return String(s == null ? '' : s).replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, max); }
+  var ECDSA = { name: 'ECDSA', namedCurve: 'P-256' }, SIGN = { name: 'ECDSA', hash: 'SHA-256' };
+  var BASE = location.origin + location.pathname;
+
+  function publish(topic, body) {
+    return fetch(NTFY + '/' + topic, { method: 'POST', body: body }).then(function (r) {
+      if (r.status === 429) throw new Error('Te veel verzoeken (limiet van ntfy.sh). Wacht even en probeer opnieuw.');
+      if (!r.ok) throw new Error('Versturen mislukt (' + r.status + ').');
+      return r.json().catch(function () { return {}; });
+    });
+  }
+  // Live-verbinding (Server-Sent Events) met automatisch herstel.
+  function stream(topic, onMsg, onStatus) {
+    var since = 'all', es = null, delay = 1000, timer = null;
+    var lastSeen = Date.now();
+    function restart() { if (es) es.close(); onStatus(false); clearTimeout(timer); timer = setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); }
+    function connect() {
+      lastSeen = Date.now();
+      es = new EventSource(NTFY + '/' + topic + '/sse?since=' + since);
+      es.onopen = function () { delay = 1000; lastSeen = Date.now(); if (navigator.onLine !== false) onStatus(true); };
+      es.addEventListener('keepalive', function () { lastSeen = Date.now(); });
+      es.addEventListener('open', function () { lastSeen = Date.now(); });
+      es.onmessage = function (e) {
+        lastSeen = Date.now();
+        var d; try { d = JSON.parse(e.data); } catch (x) { return; }
+        if (d.event && d.event !== 'message') return;
+        since = d.id; onMsg(d.message || '', d);
+      };
+      es.onerror = restart;
+    }
+    connect();
+    // ntfy stuurt elke ~45 s een keepalive; blijft alles stil, dan opnieuw verbinden
+    setInterval(function () { if (Date.now() - lastSeen > 75000) { delay = 1000; restart(); } }, 5000);
+    window.addEventListener('offline', function () { onStatus(false); });
+    window.addEventListener('online', function () { delay = 1000; restart(); });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && es && es.readyState === 2) { clearTimeout(timer); delay = 1000; connect(); }
+    });
+  }
+  // Verbindingsindicator: pas tonen na een eerste geslaagde verbinding; daarvoor een uitlegscherm na 10 s.
+  function connMonitor(onFirstFail) {
+    var connected = false, ever = false, t = null;
+    var first = setTimeout(function () { if (!ever) onFirstFail(); }, 10000);
+    return function (ok) {
+      connected = ok;
+      if (ok) { ever = true; clearTimeout(first); clearTimeout(t); $('conn').classList.add('hidden'); $('setup').classList.add('hidden'); }
+      else if (ever) { clearTimeout(t); t = setTimeout(function () { if (!connected) $('conn').classList.remove('hidden'); }, 2000); }
+      return ever;
+    };
+  }
+  function showError(title, why) {
+    $('setup-title').textContent = title; $('setup-why').textContent = why;
+    $('setup').classList.remove('hidden');
+  }
+
+  // ---------- routering ----------
+  var hp = new URLSearchParams(location.hash.slice(1));
+  window.addEventListener('hashchange', function () { location.reload(); });
+  if (!window.crypto || !crypto.subtle || !window.EventSource) {
+    showError('Browser wordt niet ondersteund', 'Open deze pagina in een recente versie van Chrome, Edge, Safari of Firefox, via https.');
+    return;
+  }
+  if (hp.get('beheer')) presenter(hp.get('beheer'));
+  else if (hp.get('s')) phone(hp.get('s'));
+  else {
+    var last = lsGet('vr_last');
+    if (last) location.replace(BASE + '#beheer=' + last); else newSession();
+  }
+
+  function newSession() {
+    crypto.subtle.generateKey(ECDSA, true, ['sign', 'verify']).then(function (kp) {
+      return crypto.subtle.exportKey('jwk', kp.privateKey);
+    }).then(function (j) {
+      var code = rndHex(12) + '.' + j.d + '.' + j.x + '.' + j.y;
+      lsSet('vr_last', code);
+      location.replace(BASE + '#beheer=' + code);
+    });
+  }
+
+  // ================= PRESENTATOR =================
+  function presenter(code) {
+    var parts = code.split('.');
+    if (parts.length !== 4 || !/^[0-9a-f]{24}$/.test(parts[0])) { showError('Ongeldige presentatorlink', 'Open het hoofdadres zonder iets erachter om een nieuwe sessie te starten.'); return; }
+    var SID = parts[0], TS = 'vr' + SID + 's', TA = 'vr' + SID + 'a';
+    var pubRaw = new Uint8Array(65); pubRaw[0] = 4; pubRaw.set(unb64u(parts[2]), 1); pubRaw.set(unb64u(parts[3]), 33);
+    var phoneUrl = BASE + '#s=' + SID + '.' + b64u(pubRaw);
+    var adminUrl = BASE + '#beheer=' + code;
+    lsSet('vr_last', code);
+    var KEY = 'vr_sess_' + SID;
+    var S = null;
+    try { S = JSON.parse(lsGet(KEY)); } catch (e) {}
+    if (!S || !Array.isArray(S.questions)) S = { questions: DEFAULTS.map(function (q) { return { id: q.id, text: q.text, options: q.options.slice(), round: 0 }; }), activeId: 'd1', answers: {} };
+    var editingId = null, privKey = null, saveT = null;
+
+    function save() { clearTimeout(saveT); saveT = setTimeout(function () { lsSet(KEY, JSON.stringify(S)); }, 300); }
+    function active() { for (var i = 0; i < S.questions.length; i++) if (S.questions[i].id === S.activeId) return i; return -1; }
+    // telling: per vraag + ronde, ontdubbeld per stem-id (laatste keuze telt)
+    function tally(q) {
+      var counts = q.options.map(function () { return 0; }), total = 0, pre = q.id + '|' + q.round + '|';
+      for (var k in S.answers) if (k.indexOf(pre) === 0) { var o = S.answers[k]; if (o >= 0 && o < counts.length) { counts[o]++; total++; } }
+      return { counts: counts, total: total };
+    }
+    function publishState() {
+      var i = active(), q = S.questions[i];
+      var payload = JSON.stringify({ ts: Date.now(), i: i + 1, n: S.questions.length,
+        q: q ? { id: q.id, text: q.text, options: q.options, round: q.round } : null });
+      return crypto.subtle.sign(SIGN, privKey, utf8(payload)).then(function (sig) {
+        return publish(TS, JSON.stringify({ p: payload, g: b64u(sig) }));
+      }).then(function () { setStatus(''); }, function (e) { setStatus(e.message, true); });
+    }
+    function setStatus(t, bad) { $('status').textContent = t; $('status').className = bad ? 'bad' : ''; }
+    function change(publishToo) { save(); render(); if (publishToo) publishState(); }
+
+    // ---- weergave ----
+    var qrDone = false;
+    function drawQR() {
+      if (qrDone) return;
+      if (typeof qrcode !== 'function') { $('qr').textContent = 'QR-code laden…'; setTimeout(drawQR, 500); return; }
+      var qr = qrcode(0, 'L'); qr.addData(phoneUrl); qr.make();
+      $('qr').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); qrDone = true;
+    }
+    function render() {
+      var idx = active(), q = S.questions[idx];
+      $('p-counter').textContent = q ? 'Vraag ' + (idx + 1) + ' van ' + S.questions.length : '';
+      $('b-prev').disabled = idx <= 0;
+      $('b-next').disabled = idx < 0 || idx >= S.questions.length - 1;
+      $('b-clear').disabled = !q;
+      $('p-question').textContent = q ? q.text : 'Nog geen vragen';
+      $('p-empty').classList.toggle('hidden', !!q);
+      $('p-empty').textContent = 'Voeg een vraag toe via "Vragen beheren".';
+      var bars = $('bars');
+      if (!q) { bars.innerHTML = ''; bars.dataset.sig = ''; $('p-total').textContent = ''; renderList(); return; }
+      var r = tally(q);
+      var sig = q.id + '|' + q.options.join('\u0001');
+      if (bars.dataset.sig !== sig) {
+        bars.innerHTML = ''; bars.dataset.sig = sig;
+        q.options.forEach(function (o, i) {
+          var row = el('div', { class: 'bar-row' });
+          row.appendChild(el('div', { class: 'bar-label' }, o));
+          var tr = el('div', { class: 'bar-track' }), f = el('div', { class: 'bar-fill' });
+          f.style.background = COLORS[i % COLORS.length]; tr.appendChild(f); row.appendChild(tr);
+          row.appendChild(el('div', { class: 'bar-val' })); bars.appendChild(row);
+        });
+      }
+      r.counts.forEach(function (c, i) {
+        var row = bars.children[i], pct = r.total ? Math.round(c / r.total * 100) : 0;
+        row.children[1].firstChild.style.width = pct + '%';
+        var v = row.children[2]; v.textContent = '';
+        v.appendChild(el('b', null, pct + '%')); v.appendChild(el('span', null, ' (' + c + ')'));
+      });
+      var t = $('p-total'); t.textContent = 'Totaal: ';
+      t.appendChild(el('b', null, String(r.total))); t.appendChild(document.createTextNode(r.total === 1 ? ' antwoord' : ' antwoorden'));
+      renderList();
+    }
+    function renderList() {
+      var list = $('qlist'); list.innerHTML = '';
+      S.questions.forEach(function (q, i) {
+        var it = el('div', { class: 'qitem' + (q.id === S.activeId ? ' active' : '') });
+        var t = el('div', { class: 'qt', title: 'Op scherm zetten' }, (i + 1) + '. ' + q.text);
+        t.appendChild(el('small', null, q.options.join(' · ') + '  —  ' + tally(q).total + ' antw.'));
+        t.onclick = function () { S.activeId = q.id; change(true); };
+        var e = el('button', { class: 'btn', type: 'button' }, 'Bewerken'); e.onclick = function () { startEdit(q); };
+        var d = el('button', { class: 'btn danger', type: 'button' }, 'Verwijderen');
+        d.onclick = function () {
+          if (!confirm('Vraag "' + q.text + '" verwijderen?')) return;
+          var wasActive = q.id === S.activeId;
+          S.questions.splice(i, 1);
+          if (wasActive) { var n = S.questions[Math.min(i, S.questions.length - 1)]; S.activeId = n ? n.id : null; }
+          change(wasActive || true);
+        };
+        it.appendChild(t); it.appendChild(e); it.appendChild(d); list.appendChild(it);
+      });
+    }
+
+    // ---- formulier ----
+    function optInputs() { return Array.prototype.slice.call($('f-opts').querySelectorAll('input')); }
+    function addOpt(val) {
+      if (optInputs().length >= MAX_O) return;
+      var row = el('div', { class: 'optrow' });
+      var inp = el('input', { type: 'text', maxlength: '60', placeholder: 'Optie' }); inp.value = val || '';
+      var rm = el('button', { type: 'button', class: 'btn', title: 'Optie verwijderen' }, '✕');
+      rm.onclick = function () { if (optInputs().length > MIN_O) { row.remove(); syncOpt(); } };
+      row.appendChild(inp); row.appendChild(rm); $('f-opts').appendChild(row); syncOpt();
+    }
+    function syncOpt() {
+      var n = optInputs().length; $('f-addopt').disabled = n >= MAX_O;
+      Array.prototype.forEach.call($('f-opts').querySelectorAll('.optrow .btn'), function (b) { b.disabled = n <= MIN_O; });
+    }
+    function resetForm() {
+      editingId = null; $('f-text').value = ''; $('f-opts').innerHTML = '';
+      for (var i = 0; i < 3; i++) addOpt('');
+      $('f-title').textContent = 'Nieuwe vraag'; $('f-save').textContent = 'Vraag toevoegen';
+      $('f-cancel').classList.add('hidden'); $('formerr').textContent = '';
+    }
+    function startEdit(q) {
+      editingId = q.id; $('f-text').value = q.text; $('f-opts').innerHTML = ''; q.options.forEach(addOpt);
+      $('f-title').textContent = 'Vraag bewerken'; $('f-save').textContent = 'Wijzigingen opslaan';
+      $('f-cancel').classList.remove('hidden'); $('formerr').textContent = ''; $('f-text').focus();
+    }
+    $('f-addopt').onclick = function () { addOpt(''); };
+    $('f-cancel').onclick = resetForm;
+    $('qform').onsubmit = function (ev) {
+      ev.preventDefault();
+      var text = clean($('f-text').value, 200), opts = [];
+      optInputs().forEach(function (i) { var v = clean(i.value, 60); if (v && opts.indexOf(v) < 0) opts.push(v); });
+      if (!text) { $('formerr').textContent = 'Vul een vraag in.'; return; }
+      if (opts.length < MIN_O || opts.length > MAX_O) { $('formerr').textContent = 'Geef ' + MIN_O + ' tot ' + MAX_O + ' verschillende opties.'; return; }
+      if (editingId) {
+        var q = S.questions.filter(function (x) { return x.id === editingId; })[0];
+        if (!q) return resetForm();
+        var same = q.options.join('\u0001') === opts.join('\u0001');
+        if (!same && tally(q).total && !confirm('De opties zijn gewijzigd; de bestaande antwoorden op deze vraag tellen dan niet meer mee. Doorgaan?')) return;
+        q.text = text; q.options = opts; if (!same) q.round = Date.now();
+        change(q.id === S.activeId);
+      } else {
+        S.questions.push({ id: rndHex(4), text: text, options: opts, round: 0 });
+        if (!S.activeId) S.activeId = S.questions[0].id;
+        change(S.questions.length === 1);
+      }
+      resetForm();
+    };
+
+    // ---- knoppen ----
+    function step(d) { var i = active() + d; if (S.questions[i]) { S.activeId = S.questions[i].id; change(true); } }
+    $('b-prev').onclick = function () { step(-1); };
+    $('b-next').onclick = function () { step(1); };
+    $('b-clear').onclick = function () {
+      var q = S.questions[active()]; if (!q || !confirm('Antwoorden op deze vraag wissen? Collega\'s kunnen daarna opnieuw antwoorden.')) return;
+      q.round = Date.now(); change(true);
+    };
+    $('b-manage').onclick = function () { $('manage').classList.remove('hidden'); };
+    $('m-close').onclick = function () { $('manage').classList.add('hidden'); };
+    $('manage').onclick = function (e) { if (e.target === $('manage')) $('manage').classList.add('hidden'); };
+    $('m-clearall').onclick = function () {
+      if (!confirm('ALLE antwoorden op alle vragen wissen?')) return;
+      var r = Date.now(); S.questions.forEach(function (q) { q.round = r; }); change(true);
+    };
+    $('m-reset').onclick = function () {
+      if (!confirm('Alle vragen vervangen door de standaardvragen (met lege tellingen)?')) return;
+      var r = Date.now();
+      S.questions = DEFAULTS.map(function (q) { return { id: q.id, text: q.text, options: q.options.slice(), round: r }; });
+      S.activeId = 'd1'; change(true);
+    };
+    $('m-new').onclick = function () {
+      if (!confirm('Nieuwe sessie starten? Er komt een nieuwe QR-code; telefoons met de oude link doen dan niet meer mee.')) return;
+      try { localStorage.removeItem('vr_last'); } catch (e) {}
+      newSession();
+    };
+    function copy(id) { var i = $(id); i.select(); try { navigator.clipboard.writeText(i.value); } catch (e) { document.execCommand('copy'); } }
+    $('m-adminlink').value = adminUrl; $('m-phonelink').value = phoneUrl;
+    $('m-copyadmin').onclick = function () { copy('m-adminlink'); };
+    $('m-copyphone').onclick = function () { copy('m-phonelink'); };
+    $('b-qr').onclick = function () { var p = $('presenter'); p.classList.toggle('noqr'); this.textContent = p.classList.contains('noqr') ? 'QR tonen' : 'QR verbergen'; };
+    $('b-full').onclick = function () { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(function () {}); };
+    document.addEventListener('keydown', function (e) {
+      if (!$('manage').classList.contains('hidden') || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') step(1);
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') step(-1);
+    });
+
+    // ---- start ----
+    $('presenter').classList.remove('hidden');
+    resetForm(); render(); drawQR();
+    crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', d: parts[1], x: parts[2], y: parts[3], ext: true }, ECDSA, false, ['sign'])
+      .then(function (k) { privKey = k; publishState(); },
+            function () { showError('Ongeldige presentatorlink', 'De sleutel in deze link klopt niet.'); });
+    var renderT = null;
+    var mon = connMonitor(function () { setStatus('Geen verbinding met ntfy.sh – blokkeert het netwerk dit?', true); });
+    stream(TA, function (body) {
+      var a; try { a = JSON.parse(body); } catch (e) { return; }
+      if (!a || typeof a.q !== 'string' || typeof a.v !== 'string' || typeof a.o !== 'number') return;
+      S.answers[a.q.slice(0, 20) + '|' + Number(a.r) + '|' + a.v.slice(0, 40)] = a.o | 0;
+      save(); clearTimeout(renderT); renderT = setTimeout(render, 100);
+    }, function (ok) { if (mon(ok) && ok) setStatus(''); });
+  }
+
+  // ================= TELEFOON =================
+  function phone(code) {
+    var parts = code.split('.');
+    if (parts.length !== 2 || !/^[0-9a-f]{24}$/.test(parts[0])) { showError('Ongeldige link', 'Scan de QR-code op het grote scherm opnieuw.'); return; }
+    var SID = parts[0], TS = 'vr' + SID + 's', TA = 'vr' + SID + 'a';
+    var pub = null, cur = null, lastTs = 0, shownKey = '', sending = false, queue = Promise.resolve();
+    $('answer').classList.remove('hidden');
+    function k(q, what) { return 'vr_' + what + '_' + SID + '_' + q.id + '_' + q.round; }
+    function render(force) {
+      var q = cur && cur.q, done = q ? lsGet(k(q, 'ans')) : null;
+      var key = q ? q.id + '|' + q.round + '|' + q.text + '|' + q.options.join('\u0001') + '|' + (done ? 1 : 0) : (cur ? 'none' : 'wait');
+      if (!force && key === shownKey) return; shownKey = key;
+      $('a-counter').textContent = q ? 'Vraag ' + cur.i + ' van ' + cur.n : '';
+      var body = $('a-body'); body.innerHTML = ''; $('a-err').textContent = '';
+      if (!q) {
+        var w = el('div', { class: 'msg' }); w.appendChild(el('span', { class: 'big' }, '⏳'));
+        w.appendChild(document.createTextNode(cur ? 'Wacht op de volgende vraag…' : 'Wacht op de eerste vraag…')); body.appendChild(w); return;
+      }
+      if (done) {
+        var m = el('div', { class: 'msg' });
+        m.appendChild(el('span', { class: 'big' }, '✅')); m.appendChild(el('b', null, 'Bedankt!')); m.appendChild(el('br'));
+        m.appendChild(document.createTextNode('Je koos: ')); m.appendChild(el('b', null, done)); m.appendChild(el('br')); m.appendChild(el('br'));
+        m.appendChild(document.createTextNode('Wacht op de volgende vraag…')); body.appendChild(m); return;
+      }
+      body.appendChild(el('h1', { id: 'a-question' }, q.text));
+      q.options.forEach(function (o, i) {
+        var b = el('button', { class: 'opt', type: 'button' }, o);
+        b.onclick = function () { submit(q, i, o, b); }; body.appendChild(b);
+      });
+    }
+    function submit(q, i, label, btn) {
+      if (sending) return; sending = true;
+      Array.prototype.forEach.call(document.querySelectorAll('.opt'), function (b) { b.disabled = true; });
+      btn.classList.add('sel');
+      var vk = k(q, 'vid'), vid = lsGet(vk);
+      if (!vid) { vid = rndHex(8); lsSet(vk, vid); }   // willekeurig stem-id per vraag; voorkomt dubbel tellen bij opnieuw versturen
+      publish(TA, JSON.stringify({ q: q.id, r: q.round, o: i, v: vid })).then(function () {
+        lsSet(k(q, 'ans'), label); sending = false; render(true);
+      }, function (e) {
+        sending = false; btn.classList.remove('sel');
+        Array.prototype.forEach.call(document.querySelectorAll('.opt'), function (b) { b.disabled = false; });
+        $('a-err').textContent = (e && e.message && e.message.indexOf('ntfy') >= 0) ? e.message : 'Versturen mislukt – geen verbinding. Probeer het opnieuw.';
+      });
+    }
+    function handle(body) {
+      var m; try { m = JSON.parse(body); } catch (e) { return; }
+      if (!m || typeof m.p !== 'string' || typeof m.g !== 'string') return;
+      // alleen berichten met een geldige handtekening van de presentator accepteren
+      queue = queue.then(function () {
+        return crypto.subtle.verify(SIGN, pub, unb64u(m.g), utf8(m.p)).then(function (ok) {
+          if (!ok) return;
+          var st = JSON.parse(m.p);
+          if (st.ts < lastTs) return; lastTs = st.ts; cur = st;
+          if (!sending) render(false);
+        }).catch(function () {});
+      });
+    }
+    var mon = connMonitor(function () {
+      showError('Geen verbinding', 'Deze pagina kan de vragen niet ophalen.');
+    });
+    crypto.subtle.importKey('raw', unb64u(parts[1]), ECDSA, false, ['verify']).then(function (k) {
+      pub = k;
+      stream(TS, handle, function (ok) { mon(ok); if (ok && !cur) setTimeout(function () { if (!cur) render(true); }, 1500); });
+    }, function () { showError('Ongeldige link', 'Scan de QR-code op het grote scherm opnieuw.'); });
+  }
+})();
+</script>
+</body>
+</html>
